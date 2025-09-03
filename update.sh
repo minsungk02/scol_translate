@@ -2,45 +2,69 @@
 set -euo pipefail
 
 # 사용법: ./update.sh <CELL_MM> [GRID_W] [GRID_H]
-# 예시  : ./update.sh 10 40 30
 CELL_MM="${1:?Usage: ./update.sh <CELL_MM> [GRID_W] [GRID_H]}"
 GRID_W="${2:-}"
 GRID_H="${3:-}"
 
-REMOTE="upstream"   # origin을 쓰면 origin으로 바꾸세요
-BR="master"
+# 원본(act) 설정
+UPSTREAM_URL="https://github.com/upoque/act.git"
+UPSTREAM_BRANCH="master"
 
-cd "$(dirname "$0")"
+# 현재 러너 레포 루트
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CACHE_DIR="$ROOT_DIR/.cache/act_upstream"   # 원본을 받아올 임시/캐시 디렉토리
+DEST_SOL="$ROOT_DIR/solutions"              # 러너 레포 내(JSON만 모아둘 폴더)
+OUT_DIR="$ROOT_DIR/output"
 
-# JSON만 sparse-checkout (디렉토리 항목 없이 패턴만!)
-git sparse-checkout init --no-cone 2>/dev/null || true
-git sparse-checkout set --no-cone "solutions/*.json" "solutions/**/*.json"
+echo "==> Upstream(JSON) sync to local solutions/"
 
-# 잔재 정리 후 패턴 재적용
-git reset --hard
-git sparse-checkout reapply
+# 1) upstream을 별도 캐시에 sparse clone (최초 1회) 또는 갱신
+if [ ! -d "$CACHE_DIR/.git" ]; then
+  mkdir -p "$CACHE_DIR"
+  git clone --depth 1 --filter=blob:none --no-checkout -b "$UPSTREAM_BRANCH" "$UPSTREAM_URL" "$CACHE_DIR"
+  (
+    cd "$CACHE_DIR"
+    git sparse-checkout init --no-cone
+    git sparse-checkout set "solutions/*.json" "solutions/**/*.json"
+    git checkout "$UPSTREAM_BRANCH"
+  )
+else
+  (
+    cd "$CACHE_DIR"
+    git fetch origin "$UPSTREAM_BRANCH" --depth 1
+    git checkout "$UPSTREAM_BRANCH"
+    # 패턴 보장
+    git sparse-checkout init --no-cone 2>/dev/null || true
+    git sparse-checkout set "solutions/*.json" "solutions/**/*.json"
+    git pull --ff-only origin "$UPSTREAM_BRANCH"
+  )
+fi
 
-# 동기화
-git fetch "$REMOTE"
-git switch "$BR" 2>/dev/null || git switch --track "$REMOTE/$BR"
-git pull "$REMOTE" "$BR"
-echo "✅ solutions/*.json synced"
-
-# 변환 실행: 셀 크기는 필수, 맵 사이즈는 있으면 넘김
-CMD=(python3 tools/trans.py
-  --solutions_glob "solutions/solution_*.json"
-  --cell_mm "$CELL_MM"
-  --center                           # 셀 '중심'을 찍는 경우(원하면 지워도 됨)
-  --out_dir output
+# 2) 캐시에서 러너 레포의 solutions/로 JSON만 동기화
+rm -rf "$DEST_SOL"
+mkdir -p "$DEST_SOL"
+(
+  cd "$CACHE_DIR/solutions"
+  # 하위 디렉토리 구조 유지하며 *.json만 복사 (BSD/GNU find 모두 호환)
+  find . -type f -name '*.json' | while IFS= read -r f; do
+    mkdir -p "$DEST_SOL/$(dirname "$f")"
+    cp "$f" "$DEST_SOL/$f"
+  done
 )
+echo "✅ solutions/*.json synced into $DEST_SOL"
 
-# 선택 인자(문서/메타 기록용)
-if [[ -n "$GRID_W" ]]; then CMD+=(--grid_w "$GRID_W"); fi
-if [[ -n "$GRID_H" ]]; then CMD+=(--grid_h "$GRID_H"); fi
-
+# 3) 변환 실행
+mkdir -p "$OUT_DIR"
+CMD=(python3 "$ROOT_DIR/tools/trans.py"
+  --solutions_glob "$DEST_SOL/solution_*.json"
+  --cell_mm "$CELL_MM"
+  --center
+  --out_dir "$OUT_DIR"
+)
+[[ -n "$GRID_W" ]] && CMD+=(--grid_w "$GRID_W")
+[[ -n "$GRID_H" ]] && CMD+=(--grid_h "$GRID_H")
 "${CMD[@]}"
+echo "✅ converted into $OUT_DIR"
 
-echo "✅ converted into output/"
-
-# (선택) CROS 패키징도 함께
-# python3 tools/pack_cros.py && echo "✅ CROS pack ready"
+# 4) (선택) CROS 패키징
+# python3 "$ROOT_DIR/tools/pack_cros.py" && echo "✅ CROS pack ready"
