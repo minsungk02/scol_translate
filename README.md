@@ -19,7 +19,7 @@ Installation & Setup
 git clone https://github.com/<YOUR_ID>/scol_translate.git
 cd scol_translate
 
-# 2) upstream(원본 act) 연결 — 처음 1회만
+# 2) upstream연결 — 처음 1회만
 git remote add upstream https://github.com/upoque/act.git
 
 # 3) 권한 부여
