@@ -1,0 +1,5 @@
+solutions/
+output/
+*.zip
+*.sha256
+tools/cfg.yaml
