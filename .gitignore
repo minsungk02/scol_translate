@@ -3,3 +3,4 @@ output/
 *.zip
 *.sha256
 tools/cfg.yaml
+.cache/
